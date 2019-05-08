@@ -1,0 +1,7 @@
+
+PKG_CXXFLAGS=-O3 -fopenmp -g -march=native -mtune=native -std=c++11 -Wall -DARMA_NO_DEBUG
+
+all : $(OBJECTS)
+
+%.o: %.cpp
+	$(CXX) $(PKG_LIBS) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) $(PKG_CXXFLAGS) -c $< $ -o $@ 

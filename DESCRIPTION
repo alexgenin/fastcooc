@@ -1,0 +1,22 @@
+Package: fastcooc
+Title: Fast Veech-like cooccurrence analysis
+Version: 0.0.0.1
+Authors@R: person("Alexandre", "Génin", email = "alexandre.genin@umontpellier.fr", role = c("aut", "cre"))
+Description: Compute positive/negative and cooccurrences à la Veech 
+  (2013), but faster than the package cooccur for cases with many species 
+  and low number of sites. It relies on pre-computing a look-up table of 
+  pvalues for all possible patterns of species incidence. Result should be 
+  very close if not identical to cooccur::cooccur. 
+Depends: R (>= 3.5.3), 
+  magrittr
+License: MIT
+Encoding: UTF-8
+LazyData: true
+LinkingTo: 
+    Rcpp, RcppArmadillo
+Imports: 
+    Rcpp, 
+    RcppArmadillo, 
+    plyr, 
+    magrittr
+RoxygenNote: 6.1.1
