@@ -1,5 +1,12 @@
+---
+output_format: github_document
+---
 
 # fastcooc: Fast pairwise computation of species associations 
+
+<!-- 
+rmarkdown::render('./README.Rmd', output_format = "github_document")
+-->
 
 ```{r setup, echo = FALSE, display = FALSE}
 library(devtools)
@@ -19,25 +26,36 @@ them in a lookup table. A fast compiled function then loops through all pairs of
 species, computes their co-occurrence and total abundances, then looks up the 
 P-value in the precomputed table. 
 
-Depending on your number of sites and number of species, pre-computing this
-table can take a while, but this needs only to be done once as long as the 
-number of sites in the analysis does not change. 
+Depending on your number of sites and number of species, pre-computing this 
+table can take a while, but this needs only to be done once and can be repeated 
+on different datasets as long as the number of sites in the analysis does not 
+change. 
 
 A typical workflow looks like this: 
 
 ```{r workflow}
 
-Nsites <- nrow(m)
-Nspecies <- ncol(m)
+# Load a community matrix from the vegan package
+library(vegan)
+data(dune)
+dune_pa <- dune > 0 # Transform to presence/absence data
+
+# Compute associations
+Nsites <- nrow(dune_pa)
 pval_table <- precompute_pvalues(Nsites, ntries = 9999)
-coocs <- fastcooc(m, pval_array = pval_table)
+coocs <- fastcooc(dune_pa, pval_array = pval_table)
 
 # Display pairwise species associations
 library(ggplot2)
 ggplot(coocs) + 
-  geom_point(aes(x = sp1, y = sp2, color = pval)) + 
-  scale_color_brewer('RdBu', limits = c(0, 1))
-                  
+  geom_raster(aes(x = sp1, y = sp2, 
+                  fill = ifelse(pval < 0.5, "negative assoc.", 
+                                "positive assoc."))) + 
+  scale_fill_manual(values = c('blue', 'red'), name = "Associations") + 
+  coord_fixed() + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1))
+
 ```
 
 Here are some graphs to help you choose: 
@@ -67,65 +85,14 @@ naive_cooc <- function(sites, trim_threshold = 0.05) {
 }
 ```
 
-```{r species_timings}
-
-timings_species_checks <- purrr::map_dfr(seq(5, 150, length.out = 10), function(Nsp) { 
-  Nsp <- round(Nsp)
-  bigmat <- matrix(rnorm(12*Nsp), nrow = 12) > 0
-  bigmat <- bigmat[ ,apply(bigmat, 2, sum) > 0] 
-  
-  a <- system.time({ 
-      result <- fastcooc(bigmat, long_form = TRUE, trim_threshold = 0.05) %>% 
-      subset(sp1 < sp2)
-  })
-  
-  b <- system.time({ 
-    cooccurdf <- print(cooccur::cooccur(t(bigmat), prob = "hyper")) %>% 
-                   (function(df) df[ c('sp1', 'sp2')]) %>% 
-                   as.matrix() 
-  })
-  
-  d <- system.time({ 
-      naive_cooc(bigmat)
-    })
-  
-  all_inters_fc <- sort(paste(result[ ,'sp1'], result[ ,'sp2'], sep = '-'))
-  all_inters_co <- sort(paste(cooccurdf[ ,'sp1'], cooccurdf[ ,'sp2'], sep = "-"))
-  
-  n_in_common <- length(intersect(all_inters_co, all_inters_fc))
-  n_diff <- max(length(all_inters_co), length(all_inters_fc)) - n_in_common
-  ntot <- Nsp*(Nsp-1)/2
-  
-  data.frame(n_in_common = n_in_common, 
-             n_diff = n_diff, 
-             ntot = ntot, 
-             nsp = Nsp, 
-             fastcooc = a['elapsed'], 
-             cooccur  = b['elapsed'], 
-             naive = d['elapsed'])
-})
-
-library(ggplot2)
-library(tidyr)
-ggplot(gather(timings_checks, method, elapsed, fastcooc, cooccur, naive), 
-       aes(x = nsp, y = elapsed, color = method) ) + 
-  geom_line() + 
-  geom_point() + 
-  scale_y_continuous(trans = "log", 
-                     breaks = unique(as.vector(outer(c(1, 2, 5, 10), 10^seq(-2, 3))))) + 
-  theme_minimal() + 
-  labs(x = "Number of species", 
-       y = "Time elapsed (in seconds)")
-
-```
-
 ```{r sites_timings}
 
 make_one_benchmark <- function(nsp, nsites) { 
   bigmat <- matrix(rnorm(nsites*nsp), nrow = nsites, ncol = nsp) > 0
   
   a <- system.time({ 
-      result <- fastcooc(bigmat, long_form = TRUE, trim_threshold = 0.05) %>% 
+      result <- fastcooc(bigmat, long_form = TRUE, trim_threshold = 0.05, 
+                         ntries = 99) %>% 
       subset(sp1 < sp2)
   })
   
@@ -165,10 +132,10 @@ bench_results <- plyr::ddply(benchmarks, ~ nsp + nsites, with,
 
 library(ggplot2)
 library(tidyr)
-ggplot(gather(timings_nsites_checks, method, elapsed, fastcooc, 
+ggplot(gather(bench_results, method, elapsed, fastcooc, 
               cooccur, without_lut), 
        aes(x = nsites, y = elapsed, color = method) ) + 
-  geom_line() + 
+  geom_line(aes(group = nsp)) + 
   geom_point() + 
   scale_y_continuous(trans = "log", 
                      breaks = unique(as.vector(outer(c(1, 2, 5, 10), 10^seq(-2, 3))))) + 
@@ -188,7 +155,7 @@ ggplot(gather(bench_results, method, elapsed, fastcooc,
 
 bench_results %>% 
   plyr::mutate(fastcooc_relative = fastcooc / without_lut) %>% 
-  plyr::mutate(fastcooc_relative = ifelse(fastcooc_relative < 1, 
+  plyr::mutate(fastcooc_relative = ifelse(fastcooc_relative > 1, 
                                           NA, log10(fastcooc_relative))) %>% 
   ggplot(aes(x = nsites, y = nsp, fill = fastcooc_relative) ) + 
     geom_raster() + 
