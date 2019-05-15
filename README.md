@@ -42,7 +42,7 @@ ggplot(coocs) +
 
 ![](README_files/figure-markdown_github/workflow-1.png)
 
-Here is the speedup brought by fastcooc compared to the coccur package:
+Here is the speedup brought by fastcooc compared toEditing fastcooc_README.md at master · alexgenin_fastcooc the coccur package (not that this is for a 'cold start', where the P-values lookup table is being computed at the beginning of the benchmark):
 
 ![](README_files/figure-markdown_github/sites_timings-1.png)
 
