@@ -8,11 +8,15 @@ output_format: github_document
 rmarkdown::render('./README.Rmd', output_format = "github_document")
 -->
 
-```{r setup, echo = FALSE, display = FALSE}
+```{r setup, include = FALSE}
 library(devtools)
-document()
 clean_dll()
 load_all()
+
+library(future)
+library(future.apply)
+plan(multicore)
+
 ```
 
 This small package provides an implementation of the procedure presented by 
@@ -27,23 +31,26 @@ species, computes their co-occurrence and total abundances, then looks up the
 P-value in the precomputed table. 
 
 Depending on your number of sites and number of species, pre-computing this 
-table can take a while, but this needs only to be done once and can be repeated 
-on different datasets as long as the number of sites in the analysis does not 
-change. 
+table can take a while, but this needs only to be done once as long as the 
+number of sites in the analysis does not change. 
 
 A typical workflow looks like this: 
 
-```{r workflow}
+```{r workflow, message = FALSE}
 
 # Load a community matrix from the vegan package
 library(vegan)
 data(dune)
 dune_pa <- dune > 0 # Transform to presence/absence data
 
-# Compute associations
+# Compute associations. The community matrix should have sites as rows and 
+# species as columns. 
 Nsites <- nrow(dune_pa)
 pval_table <- precompute_pvalues(Nsites, ntries = 9999)
 coocs <- fastcooc(dune_pa, pval_array = pval_table)
+# fastcooc returns a data.frame with three columns: the two species, and 
+# the P-value (P-values close to zero mean a negative link, those close 
+# to one mean a positive link)
 
 # Display pairwise species associations
 library(ggplot2)
@@ -58,9 +65,9 @@ ggplot(coocs) +
 
 ```
 
-Here are some graphs to help you choose: 
+Here is the speedup brought by fastcooc compared to the coccur package: 
 
-```{r}
+```{r, include = FALSE}
 naive_cooc <- function(sites, trim_threshold = 0.05) { 
   pmat <- matrix(NA_real_, ncol(sites), ncol(sites))
   for (spi in seq.int(nrow(pmat))) { 
@@ -85,14 +92,15 @@ naive_cooc <- function(sites, trim_threshold = 0.05) {
 }
 ```
 
-```{r sites_timings}
+```{r sites_timings, results = FALSE, message = FALSE, warning = FALSE, echo = FALSE}
 
 make_one_benchmark <- function(nsp, nsites) { 
+  nsp <- round(nsp)
+  nsites <- round(nsites)
   bigmat <- matrix(rnorm(nsites*nsp), nrow = nsites, ncol = nsp) > 0
-  
   a <- system.time({ 
       result <- fastcooc(bigmat, long_form = TRUE, trim_threshold = 0.05, 
-                         ntries = 99) %>% 
+                         ntries = 999) %>% 
       subset(sp1 < sp2)
   })
   
@@ -101,10 +109,6 @@ make_one_benchmark <- function(nsp, nsites) {
                    (function(df) df[ c('sp1', 'sp2')]) %>% 
                    as.matrix() 
   })
-  
-  d <- system.time({ 
-      naive_cooc(bigmat)
-    })
   
   all_inters_fc <- sort(paste(result[ ,'sp1'], result[ ,'sp2'], sep = '-'))
   all_inters_co <- sort(paste(cooccurdf[ ,'sp1'], cooccurdf[ ,'sp2'], sep = "-"))
@@ -119,51 +123,58 @@ make_one_benchmark <- function(nsp, nsites) {
              nsp = nsp, 
              nsites = nsites, 
              fastcooc = a['elapsed'], 
-             cooccur  = b['elapsed'], 
-             without_lut = d['elapsed'])
+             cooccur  = b['elapsed'])
 }
 
-benchmarks <- expand.grid(nsp    = seq(5, 250, l = 3), 
-                          nsites = seq(5, 20,  l = 3))
+benchmarks <- expand.grid(nsp    = seq(5, 250, l = 10), 
+                          nsites = seq(5, 60,  l = 10)) %>% 
+                plyr::dlply(~ nsp + nsites)
 
-bench_results <- plyr::ddply(benchmarks, ~ nsp + nsites, with, 
-                             make_one_benchmark(nsp, nsites))
+bench_results <- future_lapply(benchmarks, 
+                               function(df) { 
+                                 make_one_benchmark(df$nsp, 
+                                                    df$nsites)
+                                 }) %>% 
+                   dplyr::bind_rows()
 
+bench_results_fmt <- bench_results %>% 
+  plyr::mutate(fastcooc_rel_cooccur = fastcooc / cooccur) %>% 
+  plyr::mutate(fastcooc_rel_cooccur = ifelse(fastcooc_rel_cooccur > 1, 
+                                             NA, log10(fastcooc_rel_cooccur))) 
 
-library(ggplot2)
-library(tidyr)
-ggplot(gather(bench_results, method, elapsed, fastcooc, 
-              cooccur, without_lut), 
-       aes(x = nsites, y = elapsed, color = method) ) + 
-  geom_line(aes(group = nsp)) + 
-  geom_point() + 
-  scale_y_continuous(trans = "log", 
-                     breaks = unique(as.vector(outer(c(1, 2, 5, 10), 10^seq(-2, 3))))) + 
-  theme_minimal() + 
-  labs(x = "Number of sites (100 species)", 
-       y = "Time elapsed (in seconds)")
-
-ggplot(gather(bench_results, method, elapsed, fastcooc, 
-              cooccur, without_lut), 
-       aes(x = nsites, y = nsp, fill = elapsed) ) + 
+# ggplot(bench_results_fmt, aes(x = nsites, y = nsp, fill = fastcooc_relative) ) + 
+#   geom_raster() + 
+#   theme_minimal() + 
+#   scale_fill_viridis_c(breaks = - c(0, seq.int(5)), 
+#                         labels = function(b) paste0(10^(-b), "x"), 
+#                         name = "fastcooc speedup", 
+#                         na.value = "grey80") + 
+#   labs(x = "Number of sites", 
+#         y = "Number of species", 
+#         title = "Speedup: fastcooc vs. naive pairwise approach (without lookup table)")
+# 
+ggplot(bench_results_fmt, 
+       aes(x = nsites, y = nsp, fill = fastcooc_rel_cooccur) ) + 
   geom_raster() + 
   theme_minimal() + 
-  facet_grid( ~ method ) + 
+  scale_fill_viridis_c(breaks = - c(0, seq.int(5)), 
+                        labels = function(b) paste0(10^(-b), "x"), 
+                        name = "fastcooc speedup", 
+                        na.value = "grey80") + 
   labs(x = "Number of sites", 
-       y = "Number of species", 
-       caption = "Color indicate the time elapsed")
+        y = "Number of species", 
+        title = "Speedup: fastcooc vs. cooccur package")
 
-bench_results %>% 
-  plyr::mutate(fastcooc_relative = fastcooc / without_lut) %>% 
-  plyr::mutate(fastcooc_relative = ifelse(fastcooc_relative > 1, 
-                                          NA, log10(fastcooc_relative))) %>% 
-  ggplot(aes(x = nsites, y = nsp, fill = fastcooc_relative) ) + 
-    geom_raster() + 
-    theme_minimal() + 
-    labs(x = "Number of sites", 
-         y = "Number of species", 
-         caption = "Color indicate the time elapsed")
 
+
+```
+
+# Installation 
+
+Install using the package devtools: 
+  
+```{r, eval = FALSE}
+devtools::install_github('alexgenin/fastcooc')
 ```
 
 # Notes
@@ -171,7 +182,8 @@ bench_results %>%
 * This package has been tested againts the *coocurr* package to check that it 
 produces good results. However, results can still be slightly different because 
 it uses a randomization-based procedure to compute P-values instead of an 
-analytical approach. Typically, expect xx-yy% of links to be different. 
+analytical approach. Typically, expect 0.01-1% of all possible links to be 
+different with default parameters. 
 
 * This package does not handle NAs in data, but does handle species that are 
 completely absent or always present (those for which P-values cannot be 
@@ -179,6 +191,22 @@ computed), by assuming they cannot form significant associations.
 
 * This package does not compute any form of association strength 
 (odd ratio, variance ratio, standardized effect size, etc.), and just reports 
-P-values, which is the only information needed to build association networks. 
+P-values, which is the only information needed to build unweighted association 
+networks. 
 
+* There is no documentation yet (apart from this page). 
 
+# Further readings and references 
+
+This package implements a procedure equivalent to what is presented in Veech 
+(2013), but this is in fact a much older and classic approach (see Arita, 2016). 
+A recommended read for the ecologist interested in frequentist co-ocurrence 
+approaches is Sanderson and Pimm (2015). 
+
+Arita, H. T. 2016. Species co-occurrence analysis: pairwise versus 
+matrix-level approaches. Global Ecology and Biogeography.
+
+Veech, J. A. 2013. A probabilistic model for analysing species co-occurrence:
+Probabilistic model. Global Ecology and Biogeography 22:252–260.
+
+Sanderson, J. G., and S. L. Pimm. 2015. Patterns in nature: the analysis of species co-occurrences. The University of Chicago Press, Chicago London.

@@ -3,7 +3,7 @@
 # a certain number of co-occurrences given the total number of 
 # occurrence of two species in a pair. 
 # 
-precompute_pvalues <- function(n, ntries = 1999) { 
+precompute_pvalues <- function(n, ntries = 1999, memoise = TRUE) { 
   
   pval_arr <- array(NA_real_, dim = c(n+1, n+1, n+1), 
                     dimnames = list(total_i = seq(0, n), 

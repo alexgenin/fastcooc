@@ -9,6 +9,7 @@ fastcooc <- function(comm_matrix,
                      pval_array = NULL, 
                      long_form = TRUE, 
                      trim_threshold = 0.05, 
+                     memoise = TRUE, 
                      ...) { 
   
   if ( !is.logical(comm_matrix) ) { 
@@ -17,7 +18,7 @@ fastcooc <- function(comm_matrix,
   
   if ( is.null(pval_array) ) { 
     message('P-value lookup array has not been pre-computed, computing it now')
-    pval_array <- precompute_pvalues(nrow(comm_matrix), ...)
+    pval_array <- memoise::memoise(precompute_pvalues)(nrow(comm_matrix), ...)
   }
   
   if ( nrow(comm_matrix) != (nrow(pval_array) - 1) || 
